@@ -2,5 +2,4 @@ from cpkfile import CpkFile
 
 
 def test_constructor():
-    cpk = CpkFile()
-
+    cpk = CpkFile("fake name dot.cpk")

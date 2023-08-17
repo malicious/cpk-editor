@@ -4,16 +4,15 @@ Modeled on the patterns in Python3's `zipfile`.
 import io
 import struct
 from dataclasses import dataclass
-from pprint import pprint
-from typing import Iterable, List
+from typing import Iterable
 
 
 class CpkInfo:
-    def __init__(self, name):
-        self.name = name
+    def __init__(self, toc_data):
+        self.toc_data = toc_data
 
-    def __repr__(self):
-        return f"CpkInfo(name={self.name})"
+    def get(self, s):
+        return self.toc_data[s]
 
 
 def _check_file_header(header_bytes: bytes):
@@ -57,7 +56,7 @@ def _check_table_header(header_bytes: bytes):
 
 
 class Table:
-    BIG_TABLE_THRESHOLD = 1024
+    BIG_TABLE_THRESHOLD = 2048
 
     def __init__(self, fpin, starting_offset):
         self.table_size = _check_table_header(fpin.read(8))
@@ -98,10 +97,17 @@ class Table:
                 f"[WARN] offset for row data differs: expected {self.info.rows_offset}, current position {table_buffer.tell()}")
             table_buffer.seek(self.info.rows_offset)
 
-        self.rows = list()
+        self.infos = list()
+        self.rows = self.infos  # TODO: Make these different for CPK header vs TOC table
+
         for n in range(self.info.num_rows):
-            row = Table.Row.from_(self.column_schemas, table_buffer)
-            self.rows.append(row)
+            toc_row_data = {}
+            for cs in self.column_schemas:
+                cell_data = cs.get_cell(table_buffer)
+                toc_row_data[cs.name] = cell_data
+
+            info = CpkInfo(toc_row_data)
+            self.infos.append(info)
 
     @dataclass
     class Info:
@@ -224,13 +230,10 @@ class Table:
             return row
 
 
-class ColumnInfo:
-    pass
-
-
 class CpkFile:
-    def __init__(self, name):
+    def __init__(self, name, infos):
         self.name = name
+        self.infos = infos
 
     @classmethod
     def fromLocalPath(cls, filename):
@@ -251,23 +254,18 @@ class CpkFile:
             _check_file_header_close_marker(fp, 16 + file_header_table.table_size)
 
             # Read later tables, starting with TOC
-            fp.seek(file_header_table.rows[0].entries['TocOffset'])
+            fp.seek(file_header_table.rows[0].get('TocOffset'))
             _check_toc_header(fp.read(16))
 
-            toc_table = Table(fp, file_header_table.rows[0].entries['TocOffset'])
-            if file_header_table.rows[0].entries['Files'] != len(toc_table.rows):
+            toc_table = Table(fp, file_header_table.rows[0].get('TocOffset'))
+            if file_header_table.rows[0].get('Files') != len(toc_table.rows):
                 raise ValueError(
                     f"[ERROR] number of files doesn't match: found {len(toc_table.rows)} / expected {file_header_table.rows[0].entries['Files']}")
 
-            for row in toc_table.rows:
-                print(f"{row.entries['DirName']} -- {row.entries['FileName']}")
-
-        return cls(filename)
+            return cls(filename, toc_table.infos)
 
     def infolist(self) -> Iterable[CpkInfo]:
-        return [
-            CpkInfo(self.name),
-        ]
+        return self.infos
 
     def _infolist_str(self, indent=2) -> str:
         info_str = "[\n"

@@ -16,20 +16,35 @@ class CpkInfo:
         return f"CpkInfo(name={self.name})"
 
 
-class FileHeader:
-    def __init__(self, header_bytes: bytes):
-        self.header_bytes = header_bytes
+def _check_file_header(header_bytes: bytes):
+    (magic, unknown_0xff, packet_size) = struct.unpack('<4sIQ', header_bytes)
+    if magic != b'CPK ':
+        raise ValueError(f"CPK file header magic invalid: {repr(header_bytes[0:4])}")
+    if unknown_0xff != 0x000000ff:
+        raise ValueError(f"CPK file header padding 1 invalid: {header_bytes[4:8].hex()}")
 
-        (magic, unknown_0xff, packet_size) = struct.unpack('<4sIQ', header_bytes)
-        if magic != b'CPK ':
-            raise ValueError(f"CPK file header magic invalid: {repr(header_bytes[0:4])}")
-        if unknown_0xff != 0x000000ff:
-            raise ValueError(f"CPK file header padding 1 invalid: {header_bytes[4:8].hex()}")
+    return packet_size
 
-        print(f"[INFO] FileHeader.packet_size: {packet_size}")
 
-    def __repr__(self):
-        return repr(self.header_bytes)
+def _check_file_header_close_marker(fp, end_of_table_offset):
+    # Done reading; check our offsets by reading table size aligned to 2 KB boundary
+    aligned_offset = 2048 * int((end_of_table_offset + 2048) / 2048)
+    assert aligned_offset >= end_of_table_offset
+
+    fp.seek(aligned_offset - 6)
+    termination_bytes = fp.read(6)
+    if termination_bytes != b'(c)CRI':
+        print(f"[WARN] End of CPK header looks corrupt: {termination_bytes}")
+
+
+def _check_toc_header(header_bytes: bytes):
+    (magic, unknown_0xff, packet_size) = struct.unpack('<4sIQ', header_bytes)
+    if magic != b'TOC ':
+        raise ValueError(f"TOC table header magic invalid: {repr(header_bytes[0:4])}")
+    if unknown_0xff != 0x000000ff:
+        raise ValueError(f"TOC table header padding 1 invalid: {header_bytes[4:8].hex()}")
+
+    return packet_size
 
 
 def _check_table_header(header_bytes: bytes):
@@ -69,19 +84,24 @@ class Table:
         self.column_schemas = list()
         for n in range(self.info.num_columns):
             cs = Table.ColumnSchema.from_bytes(table_buffer.read(5))
+            cs.read_data = read_data
+            cs.read_string = read_string
+
+            cs.maybe_read_constant(table_buffer)
             cs.name = read_string(cs.name_ptr)
-            cs.maybe_read_constant(table_buffer, read_string, read_data)
 
             self.column_schemas.append(cs)
 
         # Parse the table content (row data)
         if table_buffer.tell() != self.info.rows_offset:
-            print(f"[WARN] offset for row data differs: expected {self.info.rows_offset}, current position {table_buffer.tell()}")
+            print(
+                f"[WARN] offset for row data differs: expected {self.info.rows_offset}, current position {table_buffer.tell()}")
             table_buffer.seek(self.info.rows_offset)
 
         self.rows = list()
         for n in range(self.info.num_rows):
             row = Table.Row.from_(self.column_schemas, table_buffer)
+            self.rows.append(row)
 
     @dataclass
     class Info:
@@ -101,30 +121,41 @@ class Table:
                               num_rows)
 
     class ColumnSchema:
+        """
+        Unpack the column schema
+
+        Sources:
+
+        - https://gist.github.com/unknownbrackets/78c4631a4091044d381432ffb7f1bae4
+        """
+
         @staticmethod
         def from_bytes(b: bytes):
-            cs = Table.ColumnSchema()
-            (cs.flags, cs.name_ptr) = struct.unpack('>sI', b)
+            (flags, name_ptr) = struct.unpack('>sI', b)
+            return Table.ColumnSchema(flags, name_ptr)
 
-            return cs
+        def __init__(self, flags, name_ptr):
+            self.flags = flags
+            self.name_ptr = name_ptr
 
-        def maybe_read_constant(self, buffer, read_string, read_data):
+            def fake_read_data(offset, length):
+                return f"[placeholder for fake data, offset: {offset} + length: {length}]"
+
+            def fake_read_string(offset):
+                return f"[placeholder for null-terminated string, offset: {offset}]"
+
+            self.read_data = fake_read_data
+            self.read_string = fake_read_string
+
+        def maybe_read_constant(self, buffer):
             is_zero_constant = int.from_bytes(self.flags) & 0xF0 == 0x10
             is_data_constant = int.from_bytes(self.flags) & 0xF0 == 0x30
-            is_per_row       = int.from_bytes(self.flags) & 0xF0 == 0x50
+            is_per_row = int.from_bytes(self.flags) & 0xF0 == 0x50
 
             if is_zero_constant:
                 self.constant = 0
             elif is_data_constant:
-                result = self.read_data_from(buffer)
-                self.constant = result[0]
-
-                # 0x0A: uint32 string pointer
-                if int.from_bytes(self.flags) & 0x0F == 0x0A:
-                    self.constant = read_string(result[0])
-                # 0x0B: two uint32's, data pointer + data length
-                elif int.from_bytes(self.flags) & 0x0F == 0x0B:
-                    self.constant = read_data(result[0], result[1])
+                self.constant = self._read_data_from(buffer)
             elif is_per_row:
                 return
             else:
@@ -149,12 +180,25 @@ class Table:
             else:
                 raise ValueError(f"Unidentified type_flag: {self.flags:02x}")
 
-        def read_data_from(self, buffer):
+        def _read_data_from(self, buffer):
+            b = buffer.read(struct.calcsize(self._as_struct_format()))
+            result = struct.unpack(self._as_struct_format(), b)
+
+            # 0x0A: uint32 string pointer
+            if int.from_bytes(self.flags) & 0x0F == 0x0A:
+                return self.read_string(result[0])
+            # 0x0B: two uint32's, data pointer + data length
+            elif int.from_bytes(self.flags) & 0x0F == 0x0B:
+                return self.read_data(result[0], result[1])
+            else:
+                # in normal times, just unpack the one-element tuple
+                return result[0]
+
+        def get_cell(self, row_data):
             if hasattr(self, "constant"):
                 return self.constant
 
-            b = buffer.read(struct.calcsize(self._as_struct_format()))
-            return struct.unpack(self._as_struct_format(), b)
+            return self._read_data_from(row_data)
 
         def __str__(self):
             info_str = f"Flags: {self.flags:02x}\n"
@@ -167,16 +211,16 @@ class Table:
 
     class Row:
         @staticmethod
-        def from_(column_schemas: Iterable, buffer):
+        def from_(column_schemas: Iterable, row_data):
             row = Table.Row()
             row.entries = {}
 
             for cs in column_schemas:
-                cell_data = cs.read_data_from(buffer)
+                cell_data = cs.get_cell(row_data)
                 row.entries[cs.name] = cell_data
 
             # TODO: Remove references to pprint, to keep translation size small
-            pprint(row.entries)
+            # pprint(row.entries)
             return row
 
 
@@ -196,17 +240,27 @@ class CpkFile:
             filesize = fp.tell()
             print(f"CPK file size: {filesize}")
 
+            # Read the file header + CPK table
             fp.seek(0)
-            FileHeader(fp.read(16))
-            t = Table(fp, fp.tell())
-            print(t)
+            _check_file_header(fp.read(16))
 
-            fp.seek(16)
-            table_size = _check_table_header(fp.read(8))
-            print(f"[INFO] Table header .table_size: {table_size}")
+            file_header_table = Table(fp, fp.tell())
+            if len(file_header_table.rows) != 1:
+                raise ValueError(f"Somehow found multiple rows ({len(file_header_table.rows)}) in CPK file header")
 
-            ti = Table.Info.from_bytes(fp.read(24))
-            print(ti)
+            _check_file_header_close_marker(fp, 16 + file_header_table.table_size)
+
+            # Read later tables, starting with TOC
+            fp.seek(file_header_table.rows[0].entries['TocOffset'])
+            _check_toc_header(fp.read(16))
+
+            toc_table = Table(fp, file_header_table.rows[0].entries['TocOffset'])
+            if file_header_table.rows[0].entries['Files'] != len(toc_table.rows):
+                raise ValueError(
+                    f"[ERROR] number of files doesn't match: found {len(toc_table.rows)} / expected {file_header_table.rows[0].entries['Files']}")
+
+            for row in toc_table.rows:
+                print(f"{row.entries['DirName']} -- {row.entries['FileName']}")
 
         return cls(filename)
 

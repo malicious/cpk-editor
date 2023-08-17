@@ -1,0 +1,10 @@
+--editable .
+pytest
+pytest-clarity
+pytest-socket
+pytest-random-order
+pytest-emoji
+pytest-sugar
+pytest-cov
+pytest-responses
+pytest-icdiff

@@ -27,10 +27,10 @@ class Header:
 
     @staticmethod
     def from_bytes(header_bytes: bytes):
-        (file_type, compression_flag, user_id, file_size, magic, runtime_size, type_table_entries_count,
-         local_int_variable_count,
-         local_float_variable_count, endianness, unknown_field, padding) = struct.unpack('>BBHI4sLLHHHH4s',
-                                                                                         header_bytes)
+        (file_type, compression_flag, user_id, file_size, magic, runtime_size, sections_count, local_int_variable_count,
+         local_float_variable_count, endianness, unknown_field, padding) = struct.unpack(
+            '>BBHI4sLLHHHH4s',
+            header_bytes)
 
         if file_type != 0:
             print(f"[WARN] Unidentified file type {file_type:02x}, expected 0 for BF")
@@ -40,11 +40,17 @@ class Header:
             print(f"[WARN] Expected User ID to be 0, got {user_id} instead")
         if magic != b'FLW0':
             raise ValueError(f"Unexpected magic number, got {magic}")
-        if type_table_entries_count != 5:
-            print(f"[DEBUG] Expected 5 type tables per file, got {type_table_entries_count}")
+        if sections_count != 5:
+            print(f"[DEBUG] Expected 5 type tables per file, got {sections_count}")
 
-        return Header(file_type, compression_flag, user_id, file_size, magic, runtime_size, type_table_entries_count,
+        return Header(file_type, compression_flag, user_id, file_size, magic, runtime_size, sections_count,
                       local_int_variable_count, local_float_variable_count, endianness, unknown_field, padding)
+
+    def to_bytes(self) -> bytes:
+        return struct.pack('>BBHI4sLLHHHH4s',
+                           self.file_type, self.compression_flag, self.user_id, self.file_size, self.magic,
+                           self.runtime_size, self.sections_count, self.local_int_variable_count,
+                           self.local_float_variable_count, self.endianness, self.unknown_field, self.padding)
 
 
 @dataclass
@@ -62,6 +68,10 @@ class SectionHeader:
             raise ValueError(f"Section start location is invalid")
 
         return SectionHeader(section_type, element_size, element_count, first_element_address)
+
+    def to_bytes(self) -> bytes:
+        return struct.pack('>LLLL', self.section_type, self.element_size, self.element_count,
+                           self.first_element_address)
 
     def __str__(self):
         def section_type_to_str(st):
@@ -116,7 +126,7 @@ class LabelSection:
             self.labels.append(l)
 
 
-class CompiledScript:
+class BinaryFile:
     def __init__(self, filename):
         with open(filename, "rb") as fp:
             fp.seek(0, 2)

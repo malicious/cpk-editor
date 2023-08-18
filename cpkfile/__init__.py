@@ -225,8 +225,6 @@ class Table:
                 cell_data = cs.get_cell(row_data)
                 row.entries[cs.name] = cell_data
 
-            # TODO: Remove references to pprint, to keep translation size small
-            # pprint(row.entries)
             return row
 
 
@@ -238,7 +236,6 @@ class CpkFile:
     @classmethod
     def fromLocalPath(cls, filename):
         with open(filename, "rb") as fp:
-            # Seek to the end of the file to figure out the file size
             fp.seek(0, 2)
             filesize = fp.tell()
             print(f"CPK file size: {filesize}")

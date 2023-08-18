@@ -229,9 +229,21 @@ class Table:
 
 
 class CpkFile:
-    def __init__(self, name, infos):
+    def __init__(self, name, infos: Iterable[CpkInfo]):
         self.name = name
-        self.infos = infos
+
+        # Map all infos into a more-usable dict:
+        #
+        # - key is (DirName, FileName) tuple
+        # - value is the CpkInfo dataclass
+        #
+        self.infos_by_path = {}
+        for info in infos:
+            if 'DirName' not in info.toc_data or 'FileName' not in info.toc_data:
+                raise ValueError(f"Trying to uniquely identify CpkInfo that doesn't have path data")
+
+            key = (info.get('DirName'), info.get('FileName'))
+            self.infos_by_path[key] = info
 
     @classmethod
     def fromLocalPath(cls, filename):
@@ -262,7 +274,7 @@ class CpkFile:
             return cls(filename, toc_table.infos)
 
     def infolist(self) -> Iterable[CpkInfo]:
-        return self.infos
+        return self.infos_by_path.values()
 
     def _infolist_str(self, indent=2) -> str:
         info_str = "[\n"

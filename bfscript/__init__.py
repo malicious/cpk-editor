@@ -10,6 +10,8 @@ from typing import Dict
 
 import jsonpickle
 
+from bfscript.sections import LabelSection, InstructionDataSection
+
 
 @dataclass
 class Header:
@@ -88,6 +90,27 @@ class SectionHeader:
     def to_json_ish(self):
         return jsonpickle.pickler.Pickler().flatten(self)
 
+    def __str__(self):
+        def section_type_to_str(st):
+            if st == 0:
+                return "0: Procedure entries"
+            elif st == 1:
+                return "1: Label entries"
+            elif st == 2:
+                return "2: Instruction data"
+            elif st == 3:
+                return "3: Message script data"
+            elif st == 4:
+                return "4: String data"
+            else:
+                return f"{st}: [unrecognized section type]"
+
+        info_str = "Section(\n" \
+                   f"  section_type {section_type_to_str(self.section_type)}\n" \
+                   f"  elements:         {self.element_count} count, {self.element_size} bytes each\n" \
+                   f"  first_element at: 0x{self.first_element_address:04x})"
+        return info_str
+
 
 class DefaultSection:
     def __init__(self):
@@ -134,22 +157,15 @@ class BinaryFile:
             # Finally, parse each section, now that we know what the header(s) say
             bf.sections = []
             for sh in bf.section_headers:
-                #     if sh.section_type == 0 or sh.section_type == 1:
-                #         s0 = LabelSection(sh, is_little_endian=bf.file_header.endianness)
-                #         s0.read_labels(fp)
-                #         bf.sections.append(s0)
-                #
-                #     elif sh.section_type == 2:
-                #         s0 = InstructionDataSection(sh)
-                #         s0.read_instructions(fp)
-                #         for i in s0.instructions:
-                #             print(i)
-                #     elif sh.section_type == 3:
-                #         s0 = MessageScriptSection(fp)
-                #     elif sh.section_type == 4:
-                #         s0 = StringDataSection(sh)
-                s0 = DefaultSection.from_bytes(fp, sh)
-                bf.sections.append(s0)
+                if sh.section_type == 0 or sh.section_type == 1:
+                    s0 = LabelSection.from_binary(fp, sh, is_little_endian=bf.file_header.endianness)
+                    bf.sections.append(s0)
+                elif sh.section_type == 2:
+                    s0 = InstructionDataSection.from_binary(fp, sh)
+                    bf.sections.append(s0)
+                else:
+                    s0 = DefaultSection.from_bytes(fp, sh)
+                    bf.sections.append(s0)
 
             return bf
 
@@ -178,8 +194,15 @@ class BinaryFile:
                 sh = SectionHeader.from_json_ish(fpin_j['section_headers'][n])
                 bf.section_headers.append(sh)
 
-                s0 = DefaultSection.from_json_ish(fpin_j['sections'][n])
-                bf.sections.append(s0)
+                if sh.section_type == 0 or sh.section_type == 1:
+                    s0 = LabelSection.from_json_ish(fpin_j['sections'][n])
+                    bf.sections.append(s0)
+                elif sh.section_type == 2:
+                    s0 = InstructionDataSection.from_json_ish(fpin_j['sections'][n])
+                    bf.sections.append(s0)
+                else:
+                    s0 = DefaultSection.from_json_ish(fpin_j['sections'][n])
+                    bf.sections.append(s0)
 
             return bf
 

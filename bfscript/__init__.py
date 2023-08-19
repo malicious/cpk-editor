@@ -84,29 +84,33 @@ class SectionHeader:
                            self.first_element_address)
 
     @staticmethod
-    def from_json_ish(j):
-        return jsonpickle.unpickler.Unpickler().restore(j)
+    def from_json_ish(j_in):
+        del j_in["section_type_str"]
+        return jsonpickle.unpickler.Unpickler().restore(j_in)
 
     def to_json_ish(self):
-        return jsonpickle.pickler.Pickler().flatten(self)
+        j_out = jsonpickle.pickler.Pickler().flatten(self)
+        j_out["section_type_str"] = SectionHeader._section_type_to_str(self.section_type)
+        return j_out
+
+    @staticmethod
+    def _section_type_to_str(st):
+        if st == 0:
+            return "0: Procedure entries"
+        elif st == 1:
+            return "1: Label entries"
+        elif st == 2:
+            return "2: Instruction data"
+        elif st == 3:
+            return "3: Message script data"
+        elif st == 4:
+            return "4: String data"
+        else:
+            return f"{st}: [unrecognized section type]"
 
     def __str__(self):
-        def section_type_to_str(st):
-            if st == 0:
-                return "0: Procedure entries"
-            elif st == 1:
-                return "1: Label entries"
-            elif st == 2:
-                return "2: Instruction data"
-            elif st == 3:
-                return "3: Message script data"
-            elif st == 4:
-                return "4: String data"
-            else:
-                return f"{st}: [unrecognized section type]"
-
         info_str = "Section(\n" \
-                   f"  section_type {section_type_to_str(self.section_type)}\n" \
+                   f"  section_type {SectionHeader._section_type_to_str(self.section_type)}\n" \
                    f"  elements:         {self.element_count} count, {self.element_size} bytes each\n" \
                    f"  first_element at: 0x{self.first_element_address:04x})"
         return info_str

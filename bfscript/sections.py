@@ -119,17 +119,27 @@ class Instruction:
         return struct.pack('>HH', self.opcode, self.operand)
 
     @staticmethod
-    def from_json_ish(j):
-        if 'opcode_name' in j:
-            opcode = known_opcode_names[j['opcode_name']]
+    def from_json_ish(j_in):
+        if 'opcode_name' in j_in:
+            opcode = known_opcode_names[j_in['opcode_name']]
         else:
-            opcode = j['opcode']
+            opcode = j_in['opcode']
 
-        return Instruction(opcode, j['operand'])
+        i = Instruction(opcode, j_in['operand'])
+
+        for field in ['comment', 'operand_int', 'operand_float']:
+            if field in j_in:
+                setattr(i, field, j_in[field])
+
+        return i
 
     def to_json_ish(self):
         result_dict = {}
         result_dict['comment'] = str(self)
+
+        for field in ['comment', 'instruction_index', 'operand_int', 'operand_float']:
+            if hasattr(self, field):
+                result_dict[field] = getattr(self, field)
 
         if self.opcode in known_opcodes:
             result_dict['opcode_name'] = known_opcodes[self.opcode][0]
@@ -147,41 +157,12 @@ class Instruction:
         return f"OPCODE({self.opcode})   {self.operand:04x}"
 
 
-@dataclass
-class PushInt:
-    opcode: int
-    operand_int: int
-
-    @staticmethod
-    def from_bytes(b):
-        opcode, operand, operand_int = struct.unpack('>HHL', b)
-        if operand != 0:
-            print(f"[WARN] Non-zero operand provided to the first half of OPCODE({opcode})")
-
-        return PushInt(opcode, operand_int)
-
-    def to_bytes(self) -> bytes:
-        return struct.pack('>HHL', self.opcode, 0, self.operand_int)
-
-
-@dataclass
-class PushFloat:
-    opcode: int
-    operand_float: float
-
-    @staticmethod
-    def from_bytes(b: bytes):
-        opcode, operand, operand_float = struct.unpack('>HHf', b)
-        if operand != 0:
-            print(f"[WARN] Non-zero operand provided to the first half of OPCODE({opcode})")
-
-        return PushFloat(opcode, operand_float)
-
-    def to_bytes(self) -> bytes:
-        return struct.pack('>HHf', self.opcode, 0, self.operand_float)
-
-
 class InstructionDataSection:
+    def update_proc_names(self, name_lookup_fn):
+        for instruction in self.instructions:
+            if instruction.opcode == known_opcode_names["PROC"]:
+                instruction.comment = f"PROC {name_lookup_fn(instruction.operand)}"
+
     @staticmethod
     def from_binary(fpin, sh):
         if sh.element_size != 4:
@@ -191,23 +172,38 @@ class InstructionDataSection:
         s0.instructions = []
 
         fpin.seek(sh.first_element_address)
-        bytes_remaining = sh.element_count * sh.element_size
-        while bytes_remaining > 0:
+        instruction_index = 0
+        while instruction_index < sh.element_count:
             next_bytes = fpin.read(sh.element_size)
-            bytes_remaining -= sh.element_size
             next_instruction = Instruction.from_bytes(next_bytes)
+            s0.instructions.append(next_instruction)
+
+            next_instruction.instruction_index = instruction_index
+            instruction_index += 1
 
             if next_instruction.opcode == known_opcode_names["PUSHI"]:
-                operand_bytes = fpin.read(4)
-                bytes_remaining -= 4
-                next_instruction = PushInt.from_bytes(b''.join([next_bytes, operand_bytes]))
+                next_next_bytes = fpin.read(sh.element_size)
+                (operand_int,) = struct.unpack('>L', next_next_bytes)
+                next_instruction.operand_int = operand_int
+
+                next_next_instruction = Instruction.from_bytes(next_next_bytes)
+                s0.instructions.append(next_next_instruction)
+
+                next_next_instruction.comment = f"operand for previous PUSHI instruction: {operand_int:08x}"
+                next_next_instruction.instruction_index = instruction_index
+                instruction_index += 1
 
             elif next_instruction.opcode == known_opcode_names["PUSHF"]:
-                operand_bytes = fpin.read(4)
-                bytes_remaining -= 4
-                next_instruction = PushFloat.from_bytes(b''.join([next_bytes, operand_bytes]))
+                next_next_bytes = fpin.read(sh.element_size)
+                (operand_float,) = struct.unpack('>f', next_next_bytes)
+                next_instruction.operand_float = operand_float
 
-            s0.instructions.append(next_instruction)
+                next_next_instruction = Instruction.from_bytes(next_next_bytes)
+                s0.instructions.append(next_next_instruction)
+
+                next_next_instruction.comment = f"operand for previous PUSHF instruction: {operand_float}"
+                next_next_instruction.instruction_index = instruction_index
+                instruction_index += 1
 
         return s0
 
@@ -220,19 +216,7 @@ class InstructionDataSection:
         s0.instructions = []
 
         for instruction in j:
-            if 'opcode' in instruction and instruction['opcode'] == known_opcode_names["PUSHI"]:
-                next_instruction = PushInt(
-                    instruction['opcode'],
-                    instruction['operand_int']
-                )
-            elif 'opcode' in instruction and instruction['opcode'] == known_opcode_names["PUSHF"]:
-                next_instruction = PushFloat(
-                    instruction['opcode'],
-                    instruction['operand_float']
-                )
-            else:
-                next_instruction = Instruction.from_json_ish(instruction)
-
+            next_instruction = Instruction.from_json_ish(instruction)
             s0.instructions.append(next_instruction)
 
         return s0

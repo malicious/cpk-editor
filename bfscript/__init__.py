@@ -10,7 +10,7 @@ from typing import Dict
 
 import jsonpickle
 
-from bfscript.sections import LabelSection, InstructionDataSection
+from bfscript.sections import LabelSection, InstructionDataSection, Instruction
 
 
 @dataclass
@@ -146,6 +146,46 @@ class DefaultSection:
 
 
 class BinaryFile:
+    def _touch_up_names(self):
+        """
+        Touch up the function names in instruction comments
+        """
+        if len([section for section in self.section_headers if section.section_type == 0]) != 1:
+            raise ValueError("[ERROR] More than one section where section_type=0")
+        if self.section_headers[0].section_type != 0:
+            raise ValueError("[ERROR] Section 0 is not of section_type 0")
+
+        if len([section for section in self.section_headers if section.section_type == 2]) != 1:
+            raise ValueError("[ERROR] More than one section where section_type=2")
+        if self.section_headers[2].section_type != 2:
+            raise ValueError("[ERROR] Section 2 is not of section_type 2")
+
+        def lookup_name(n):
+            return self.sections[0].labels[n].name
+
+        self.sections[2].update_proc_names(lookup_name)
+
+    def inject_instruction(self, position, opcode, operand):
+        fake_instruction = Instruction(opcode, operand)
+        instruction_size = self.section_headers[2].element_size
+
+        self.file_header.file_size += instruction_size
+
+        for proc in self.sections[0].labels:
+            if proc.instruction_index >= position:
+                proc.instruction_index += 1
+
+        for label in self.sections[1].labels:
+            if label.instruction_index >= position:
+                label.instruction_index += 1
+
+        self.section_headers[2].element_count += 1
+        self.sections[2].instructions[position:position] = [fake_instruction]
+
+        self.section_headers[3].first_element_address += instruction_size
+
+        self.section_headers[4].first_element_address += instruction_size
+
     @staticmethod
     def from_binary(filename):
         with open(filename, "rb") as fp:
@@ -171,7 +211,8 @@ class BinaryFile:
                     s0 = DefaultSection.from_bytes(fp, sh)
                     bf.sections.append(s0)
 
-            return bf
+        bf._touch_up_names()
+        return bf
 
     def to_binary(self, filename):
         with open(filename, "wb") as fpout:

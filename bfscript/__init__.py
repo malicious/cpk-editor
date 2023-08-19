@@ -177,30 +177,34 @@ class BinaryFile:
             raise ValueError("[ERROR] Section 2 is not of section_type 2")
 
         def lookup_name(n):
+            if n < 0 or n >= len(self.sections[1].labels):
+                print("[ERROR] Went past last index of table 1, file is malformed")
+                return f"LABEL({n}) -- label not found in table size {len(self.sections[1].labels)}, please update table"
+
             return f"\"{self.sections[1].labels[n].name}\" / instruction {self.sections[1].labels[n].instruction_index}"
 
         self.sections[2].update_label_names(lookup_name)
 
-    def inject_instruction(self, position, opcode, operand):
+    def inject_instruction(self, position, count, opcode, operand):
         fake_instruction = Instruction(opcode, operand)
         instruction_size = self.section_headers[2].element_size
 
-        self.file_header.file_size += instruction_size
+        self.file_header.file_size += instruction_size * count
 
         for proc in self.sections[0].labels:
             if proc.instruction_index >= position:
-                proc.instruction_index += 1
+                proc.instruction_index += count
 
         for label in self.sections[1].labels:
             if label.instruction_index >= position:
-                label.instruction_index += 1
+                label.instruction_index += count
 
-        self.section_headers[2].element_count += 1
-        self.sections[2].instructions[position:position] = [fake_instruction]
+        self.section_headers[2].element_count += count
+        self.sections[2].instructions[position:position] = [fake_instruction] * count
 
-        self.section_headers[3].first_element_address += instruction_size
+        self.section_headers[3].first_element_address += instruction_size * count
 
-        self.section_headers[4].first_element_address += instruction_size
+        self.section_headers[4].first_element_address += instruction_size * count
 
     @staticmethod
     def from_binary(filename):

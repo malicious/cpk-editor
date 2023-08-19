@@ -9,6 +9,7 @@ packages = [
 
 requirements = [
     'click',
+    'jsonpickle'
 ]
 
 setup(name='cpk-editor',

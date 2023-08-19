@@ -38,6 +38,7 @@ class LabelSection:
             name = name_bytes[:name_end].decode('ascii')
 
             l = LabelSection.Label(name, instruction_index)
+            l.label_index = n
             s0.labels.append(l)
 
         return s0
@@ -56,11 +57,16 @@ class LabelSection:
         return b''.join(encoded_labels)
 
     @staticmethod
-    def from_json_ish(j):
-        return jsonpickle.Unpickler().restore(j)
+    def from_json_ish(j_in):
+        return jsonpickle.Unpickler().restore(j_in)
 
     def to_json_ish(self):
-        return jsonpickle.Pickler().flatten(self)
+        j_out = jsonpickle.Pickler().flatten(self)
+
+        for label_index in range(len(j_out['labels'])):
+            j_out['labels'][label_index]["label_index"] = label_index
+
+        return j_out
 
 
 known_opcodes = {
@@ -88,12 +94,18 @@ known_opcodes = {
     20: ('OR', 'Logical OR 2 values by popping them off the stack and pushing the return value to the stack'),
     21: ('AND', 'Logical AND 2 values by popping them off the stack and pushing the return value to the stack'),
     22: ('EQ', 'Check 2 values for equality by popping them off the stack and pushing the return value to the stack'),
-    23: ('NEQ', 'Check 2 values for non-equality by popping them off the stack and pushing the return value to the stack'),
-    24: ('S', 'Check if the first value is smaller than the second value by popping them off the stack and pushing the return value to the stack'),
-    25: ('L', 'Check if the first value is larger than the second value by popping them off the stack and pushing the return value to the stack'),
-    26: ('SE', 'Check if the first value is smaller than or equal to the second value by popping them off the stack and pushing the return value to the stack'),
-    27: ('LE', 'Check if the first value is larger than or equal to the second value by popping them off the stack and pushing the return value to the stack'),
-    28: ('IF', 'Pop a value off the stack and check if it isn\'t zero. If it is zero then jump to the specified label by index'),
+    23: (
+    'NEQ', 'Check 2 values for non-equality by popping them off the stack and pushing the return value to the stack'),
+    24: ('S',
+         'Check if the first value is smaller than the second value by popping them off the stack and pushing the return value to the stack'),
+    25: ('L',
+         'Check if the first value is larger than the second value by popping them off the stack and pushing the return value to the stack'),
+    26: ('SE',
+         'Check if the first value is smaller than or equal to the second value by popping them off the stack and pushing the return value to the stack'),
+    27: ('LE',
+         'Check if the first value is larger than or equal to the second value by popping them off the stack and pushing the return value to the stack'),
+    28: ('IF',
+         'Pop a value off the stack and check if it isn\'t zero. If it is zero then jump to the specified label by index'),
     29: ('PUSHIS', 'Push a short integer value to the stack'),
     30: ('PUSHLIX', 'Push the value of a local indexed int to the stack'),
     31: ('PUSHLFX', 'Push the value of a local indexed float to the stack'),
@@ -125,7 +137,12 @@ class Instruction:
         else:
             opcode = j_in['opcode']
 
-        i = Instruction(opcode, j_in['operand'])
+        if 'operand_hex' in j_in:
+            operand = int(j_in['operand_hex'], 16)
+        else:
+            operand = j_in['operand']
+
+        i = Instruction(opcode, operand)
 
         for field in ['comment', 'operand_int', 'operand_float']:
             if field in j_in:
@@ -135,26 +152,26 @@ class Instruction:
 
     def to_json_ish(self):
         result_dict = {}
-        result_dict['comment'] = str(self)
-
-        for field in ['comment', 'instruction_index', 'operand_int', 'operand_float']:
-            if hasattr(self, field):
-                result_dict[field] = getattr(self, field)
 
         if self.opcode in known_opcodes:
             result_dict['opcode_name'] = known_opcodes[self.opcode][0]
         else:
             result_dict['opcode'] = self.opcode
 
-        result_dict['operand'] = self.operand
+        result_dict['operand_hex'] = f"0x{self.operand:04X}"
+
+        result_dict['comment'] = str(self)
+        for field in ['comment', 'instruction_index', 'operand_int', 'operand_float']:
+            if hasattr(self, field):
+                result_dict[field] = getattr(self, field)
 
         return result_dict
 
     def __str__(self):
         if self.opcode in known_opcodes:
-            return f"{known_opcodes[self.opcode][0]}   {self.operand:04x}"
+            return f"{known_opcodes[self.opcode][0]}   0x{self.operand:04X}"
 
-        return f"OPCODE({self.opcode})   {self.operand:04x}"
+        return f"OPCODE({self.opcode})   0x{self.operand:04X}"
 
 
 class InstructionDataSection:
@@ -162,11 +179,15 @@ class InstructionDataSection:
         for instruction in self.instructions:
             if instruction.opcode == known_opcode_names["PROC"]:
                 instruction.comment = f"PROC {name_lookup_fn(instruction.operand)}"
+            if instruction.opcode == known_opcode_names["CALL"]:
+                instruction.comment = f"CALL {name_lookup_fn(instruction.operand)}"
 
     def update_label_names(self, name_lookup_fn):
         for instruction in self.instructions:
             if instruction.opcode == known_opcode_names["GOTO"]:
                 instruction.comment = f"GOTO {name_lookup_fn(instruction.operand)}"
+            if instruction.opcode == known_opcode_names["IF"]:
+                instruction.comment = f"IF {name_lookup_fn(instruction.operand)}"
 
     @staticmethod
     def from_binary(fpin, sh):

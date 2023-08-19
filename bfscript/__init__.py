@@ -146,7 +146,7 @@ class DefaultSection:
 
 
 class BinaryFile:
-    def _touch_up_names(self):
+    def _touch_up_proc_names(self):
         """
         Touch up the function names in instruction comments
         """
@@ -164,6 +164,22 @@ class BinaryFile:
             return self.sections[0].labels[n].name
 
         self.sections[2].update_proc_names(lookup_name)
+
+    def _touch_up_label_names(self):
+        if len([section for section in self.section_headers if section.section_type == 1]) != 1:
+            raise ValueError("[ERROR] More than one section where section_type=1")
+        if self.section_headers[1].section_type != 1:
+            raise ValueError("[ERROR] Section 1 is not of section_type 1")
+
+        if len([section for section in self.section_headers if section.section_type == 2]) != 1:
+            raise ValueError("[ERROR] More than one section where section_type=2")
+        if self.section_headers[2].section_type != 2:
+            raise ValueError("[ERROR] Section 2 is not of section_type 2")
+
+        def lookup_name(n):
+            return f"\"{self.sections[1].labels[n].name}\" / instruction {self.sections[1].labels[n].instruction_index}"
+
+        self.sections[2].update_label_names(lookup_name)
 
     def inject_instruction(self, position, opcode, operand):
         fake_instruction = Instruction(opcode, operand)
@@ -211,7 +227,8 @@ class BinaryFile:
                     s0 = DefaultSection.from_bytes(fp, sh)
                     bf.sections.append(s0)
 
-        bf._touch_up_names()
+        bf._touch_up_proc_names()
+        bf._touch_up_label_names()
         return bf
 
     def to_binary(self, filename):

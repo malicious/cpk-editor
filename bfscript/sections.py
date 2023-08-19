@@ -163,6 +163,11 @@ class InstructionDataSection:
             if instruction.opcode == known_opcode_names["PROC"]:
                 instruction.comment = f"PROC {name_lookup_fn(instruction.operand)}"
 
+    def update_label_names(self, name_lookup_fn):
+        for instruction in self.instructions:
+            if instruction.opcode == known_opcode_names["GOTO"]:
+                instruction.comment = f"GOTO {name_lookup_fn(instruction.operand)}"
+
     @staticmethod
     def from_binary(fpin, sh):
         if sh.element_size != 4:
@@ -189,7 +194,7 @@ class InstructionDataSection:
                 next_next_instruction = Instruction.from_bytes(next_next_bytes)
                 s0.instructions.append(next_next_instruction)
 
-                next_next_instruction.comment = f"operand for previous PUSHI instruction: {operand_int:08x}"
+                next_next_instruction.comment = f"operand for previous PUSHI instruction: 0x{operand_int:08x}"
                 next_next_instruction.instruction_index = instruction_index
                 instruction_index += 1
 

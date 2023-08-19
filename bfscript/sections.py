@@ -120,14 +120,12 @@ class Instruction:
 
     @staticmethod
     def from_json_ish(j):
-        i = Instruction()
         if 'opcode_name' in j:
-            i.opcode = known_opcode_names[j['opcode_name']]
+            opcode = known_opcode_names[j['opcode_name']]
         else:
-            i.opcode = j['opcode']
+            opcode = j['opcode']
 
-        i.operand = j['operand']
-        return i
+        return Instruction(opcode, j['operand'])
 
     def to_json_ish(self):
         result_dict = {}
@@ -222,12 +220,12 @@ class InstructionDataSection:
         s0.instructions = []
 
         for instruction in j:
-            if instruction['opcode'] == known_opcode_names["PUSHI"]:
+            if 'opcode' in instruction and instruction['opcode'] == known_opcode_names["PUSHI"]:
                 next_instruction = PushInt(
                     instruction['opcode'],
                     instruction['operand_int']
                 )
-            elif instruction['opcode'] == known_opcode_names["PUSHF"]:
+            elif 'opcode' in instruction and instruction['opcode'] == known_opcode_names["PUSHF"]:
                 next_instruction = PushFloat(
                     instruction['opcode'],
                     instruction['operand_float']
